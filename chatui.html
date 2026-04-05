@@ -352,6 +352,33 @@
     .thinking-pill__dots span:nth-child(2) { animation-delay: 0.15s; }
     .thinking-pill__dots span:nth-child(3) { animation-delay: 0.3s; }
 
+    .reasoning-feed {
+      width: 100%;
+      max-width: var(--thread-max);
+      margin: 0.35rem auto 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      padding: 0 0.25rem;
+    }
+
+    .reasoning-step {
+      display: inline-flex;
+      align-self: flex-start;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      color: #475569;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-left: 3px solid #6366f1;
+      border-radius: 0.5rem;
+      padding: 0.4rem 0.65rem;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      max-width: min(100%, 38rem);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
     @keyframes dot-pulse {
       0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
       40% { opacity: 1; transform: scale(1); }
@@ -553,6 +580,7 @@ const State = {
   currentTurnId: null,
   streamBuffer: "",
   streamPreviewText: "",
+  pendingButtons: null,
   controller: null,
   streamRenderTimer: null,
   streamPreviewShown: false,
@@ -693,7 +721,8 @@ const EventDebug = {
     const summary = {
       type: evt.type,
       hasContent: evt.content != null && String(evt.content).length > 0,
-      steps: Array.isArray(evt.steps) ? evt.steps.length : 0
+      steps: Array.isArray(evt.steps) ? evt.steps.length : 0,
+      buttons: Array.isArray(evt.buttons) ? evt.buttons.length : 0
     };
     console.log("[LLM STREAM] normalized_event", summary, evt);
   },
@@ -836,6 +865,70 @@ const ContentExtractor = {
     return null;
   },
 
+  extractReasoningSteps(input) {
+    if (!input || typeof input !== "object") return null;
+    const candidates = new Set([
+      "reasoning",
+      "reasoning_updates",
+      "status_updates",
+      "thoughts",
+      "steps",
+      "plan_steps"
+    ]);
+    const out = [];
+    const seen = new Set();
+    const stack = [input];
+
+    const pushStep = (value) => {
+      const text = String(value ?? "").trim();
+      if (!text) return;
+      if (seen.has(text)) return;
+      seen.add(text);
+      out.push(text);
+    };
+
+    while (stack.length) {
+      const cur = stack.pop();
+      if (!cur || typeof cur !== "object") continue;
+
+      if (Array.isArray(cur)) {
+        for (const item of cur) {
+          if (typeof item === "string") pushStep(item);
+          else if (item && typeof item === "object") {
+            const t = item.text ?? item.message ?? item.status ?? item.step ?? item.title;
+            if (typeof t === "string") pushStep(t);
+            stack.push(item);
+          }
+        }
+        continue;
+      }
+
+      for (const [k, v] of Object.entries(cur)) {
+        if (candidates.has(k)) {
+          if (typeof v === "string") pushStep(v);
+          else if (Array.isArray(v)) {
+            for (const item of v) {
+              if (typeof item === "string") pushStep(item);
+              else if (item && typeof item === "object") {
+                const t = item.text ?? item.message ?? item.status ?? item.step ?? item.title;
+                if (typeof t === "string") pushStep(t);
+              }
+            }
+          } else if (v && typeof v === "object") {
+            const t = v.text ?? v.message ?? v.status ?? v.step ?? v.title;
+            if (typeof t === "string") pushStep(t);
+          }
+        }
+
+        if (v && typeof v === "object") stack.push(v);
+      }
+
+      if (out.length >= 12) break;
+    }
+
+    return out.length ? out : null;
+  },
+
   extractAssistantText(payload) {
     const p = this.unwrapJson(payload);
 
@@ -942,7 +1035,7 @@ const ContentExtractor = {
   },
 
   prepareFinalPayload(payload) {
-    if (payload == null) return { text: "", buttons: null, agents: null };
+    if (payload == null) return { text: "", buttons: null, agents: null, reasoning: null };
 
     const normalized = this.unwrapJson(payload);
     const text = this.extractAssistantText(normalized) || this.toDisplayMarkdown(normalized) || "";
@@ -950,8 +1043,9 @@ const ContentExtractor = {
     const obj = normalized && typeof normalized === "object" ? normalized : {};
     return {
       text,
-      buttons: obj.buttons ?? null,
-      agents: obj.agents ?? null
+      buttons: obj.buttons ?? obj.quick_link_buttons ?? null,
+      agents: obj.agents ?? null,
+      reasoning: this.extractReasoningSteps(obj)
     };
   }
 };
@@ -1148,6 +1242,41 @@ const Renderer = (() => {
     document.getElementById("status-line")?.remove();
   }
 
+  function ensureReasoningFeed() {
+    let row = document.getElementById("reasoning-feed-row");
+    if (!row) {
+      row = document.createElement("div");
+      row.id = "reasoning-feed-row";
+      row.className = "reasoning-feed";
+      DOM.chat.appendChild(row);
+    }
+    return row;
+  }
+
+  function reasoning(text) {
+    const cleaned = String(text || "").trim();
+    if (!cleaned) return;
+
+    const feed = ensureReasoningFeed();
+    const last = feed.lastElementChild?.getAttribute("data-text");
+    if (last === cleaned) return;
+
+    const step = document.createElement("div");
+    step.className = "reasoning-step";
+    step.setAttribute("data-text", cleaned);
+    step.textContent = cleaned;
+    feed.appendChild(step);
+
+    while (feed.children.length > 8) {
+      feed.removeChild(feed.firstElementChild);
+    }
+    scrollChatToEnd();
+  }
+
+  function clearReasoning() {
+    document.getElementById("reasoning-feed-row")?.remove();
+  }
+
   return {
     userMessage,
     renderMarkdown,
@@ -1155,7 +1284,9 @@ const Renderer = (() => {
     renderButtons,
     renderAgentFlow,
     status,
-    clearStatus
+    clearStatus,
+    reasoning,
+    clearReasoning
   };
 })();
 
@@ -1181,6 +1312,58 @@ const EventNormalizer = {
 
     const type = String(raw.type || raw.event || "").toLowerCase();
     const nodeName = raw?.metadata?.nodeName || raw?.nodeName || raw?.node;
+
+    // Connect6/WebSocket style reasoning updates
+    if (typeof raw.thinking_update === "string" && raw.thinking_update.trim()) {
+      return { type: "reasoning", content: raw.thinking_update.trim() };
+    }
+
+    if (typeof raw.message_type_thinking_update === "string" && raw.message_type_thinking_update.trim()) {
+      return { type: "reasoning", content: raw.message_type_thinking_update.trim() };
+    }
+
+    if (raw.tool_call != null) {
+      const toolLabel =
+        typeof raw.tool_call === "string"
+          ? raw.tool_call
+          : raw.tool_call?.name ||
+            raw.tool_call?.tool_name ||
+            raw.tool_call?.tool ||
+            raw.tool_call?.type ||
+            JSON.stringify(raw.tool_call);
+      return { type: "reasoning", content: `Using tool: ${String(toolLabel)}` };
+    }
+
+    if (typeof raw.response_chunk === "string") {
+      return {
+        type: "delta",
+        content: raw.response_chunk,
+        buttons: Array.isArray(raw.quick_link_buttons) ? raw.quick_link_buttons : null
+      };
+    }
+
+    if (typeof raw.message_type_final_response === "string") {
+      return {
+        type: "complete",
+        content: this.extractFinal(raw.message_type_final_response),
+        buttons: Array.isArray(raw.message_type_custom_buttons_output) ? raw.message_type_custom_buttons_output : null
+      };
+    }
+
+    if (Array.isArray(raw.quick_link_buttons) && raw.quick_link_buttons.length) {
+      return { type: "buttons", buttons: raw.quick_link_buttons };
+    }
+
+    if (Array.isArray(raw.message_type_custom_buttons_output) && raw.message_type_custom_buttons_output.length) {
+      return { type: "buttons", buttons: raw.message_type_custom_buttons_output };
+    }
+
+    if (raw.complete_response != null) {
+      return {
+        type: "complete",
+        content: raw.complete_response === true ? "" : this.extractFinal(raw.complete_response)
+      };
+    }
 
     if (type === "status_plan" && Array.isArray(raw.steps)) {
       return { type: "status_plan", steps: raw.steps };
@@ -1372,11 +1555,21 @@ const StreamProcessor = {
         this.startStatusPlan(evt.steps);
         break;
 
+      case "reasoning":
+        EventDebug.renderStage("process.reasoning", { text: evt.content });
+        this.stopStatusPlan();
+        Renderer.status(evt.content);
+        Renderer.reasoning(evt.content);
+        break;
+
       case "delta": {
         const piece = ContentExtractor.deltaPiece(evt.content);
         if (!piece) break;
 
         State.streamBuffer += piece;
+        if (Array.isArray(evt.buttons) && evt.buttons.length) {
+          State.pendingButtons = evt.buttons;
+        }
         State.streamPreviewText = this.deriveStreamPreview(State.streamBuffer);
 
         if (this.shouldRenderDeltaPreview(State.streamPreviewText)) {
@@ -1394,10 +1587,18 @@ const StreamProcessor = {
         break;
       }
 
+      case "buttons":
+        if (Array.isArray(evt.buttons) && evt.buttons.length) {
+          State.pendingButtons = evt.buttons;
+          Renderer.renderButtons(evt.buttons);
+        }
+        break;
+
       case "status":
         EventDebug.renderStage("process.status", { text: evt.content });
         this.stopStatusPlan();
         Renderer.status(evt.content);
+        Renderer.reasoning(evt.content);
         break;
 
       case "complete": {
@@ -1415,6 +1616,13 @@ const StreamProcessor = {
           finalPayloadType: typeof (evt.content || State.streamBuffer)
         });
         this.renderFinal(evt.content || State.streamBuffer);
+        if (Array.isArray(evt.buttons) && evt.buttons.length) {
+          State.pendingButtons = evt.buttons;
+        }
+        if (Array.isArray(State.pendingButtons) && State.pendingButtons.length) {
+          Renderer.renderButtons(State.pendingButtons);
+        }
+        State.pendingButtons = null;
         State.streamBuffer = "";
         State.streamPreviewText = "";
         EventDebug.endTurn("complete");
@@ -1427,6 +1635,7 @@ const StreamProcessor = {
         this.stopStatusPlan();
         Renderer.clearStatus();
         State.streamPreviewText = "";
+        State.pendingButtons = null;
         Renderer.renderMarkdown("[Error]");
         EventDebug.endTurn("error");
         break;
@@ -1480,7 +1689,7 @@ const StreamProcessor = {
   },
 
   renderFinal(payload) {
-    const { text, buttons, agents } = ContentExtractor.prepareFinalPayload(payload);
+    const { text, buttons, agents, reasoning } = ContentExtractor.prepareFinalPayload(payload);
     const body =
       text.trim() ||
       (typeof payload === "object" && payload !== null && !Array.isArray(payload)
@@ -1496,11 +1705,15 @@ const StreamProcessor = {
     EventDebug.renderStage("render.final", {
       bodyLen: body.length,
       buttons: Array.isArray(buttons) ? buttons.length : 0,
-      agents: Array.isArray(agents) ? agents.length : 0
+      agents: Array.isArray(agents) ? agents.length : 0,
+      reasoning: Array.isArray(reasoning) ? reasoning.length : 0
     });
 
     if (buttons?.length) Renderer.renderButtons(buttons);
     if (agents?.length) Renderer.renderAgentFlow(agents);
+    if (reasoning?.length) {
+      reasoning.forEach((step) => Renderer.reasoning(step));
+    }
   }
 };
 
@@ -1613,6 +1826,7 @@ const Controller = {
     Renderer.userMessage(text);
     StreamProcessor.stopStatusPlan();
     Renderer.clearStatus();
+    Renderer.clearReasoning();
 
     DOM.input.value = "";
     DOM.input.disabled = true;
@@ -1626,6 +1840,7 @@ const Controller = {
     State.currentTurnId = Utils.uuid();
     State.streamBuffer = "";
     State.streamPreviewText = "";
+    State.pendingButtons = null;
     State.streamPreviewShown = false;
     State.finalReceived = false;
     State.animationToken = null;
