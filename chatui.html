@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
+  <style>
+    :root {
+      --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      --bg-app: #f4f4f5;
+      --bg-surface: #ffffff;
+      --bg-user: #18181b;
+      --text-primary: #18181b;
+      --text-muted: #71717a;
+      --text-user: #fafafa;
+      --border: #e4e4e7;
+      --border-strong: #d4d4d8;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --code-bg: #faf5ff;
+      --code-text: #5b21b6;
+      --pre-bg: #0c1222;
+      --pre-text: #e2e8f0;
+      --ring: rgba(59, 130, 246, 0.45);
+      --thread-max: 44rem;
+      --radius-bubble: 1.125rem;
+      --radius-input: 0.875rem;
+      --shadow-bubble: 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: 16px;
+      color: var(--text-primary);
+      background: var(--bg-app);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app { height: 100%; display: flex; flex-direction: column; max-width: 100%; }
+
+    .app-header {
+      flex-shrink: 0;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1rem;
+    }
+
+    .app-header__inner {
+      max-width: calc(var(--thread-max) + 2rem);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .app-brand { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+    .app-brand h1 { margin: 0; font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.02em; }
+    .app-brand p {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .btn {
+      font-family: inherit;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      border-radius: 0.5rem;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      padding: 0.5rem 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .btn:hover { background: #fafafa; border-color: #a1a1aa; }
+    .btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+    .chat-scroll {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 1rem;
+      scroll-behavior: smooth;
+    }
+
+    .thread {
+      max-width: var(--thread-max);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .chat-empty {
+      text-align: center;
+      padding: 3rem 1.5rem;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      line-height: 1.6;
+      max-width: 20rem;
+      margin: 0 auto;
+    }
+
+    .chat-empty strong {
+      display: block;
+      color: var(--text-primary);
+      font-size: 0.9375rem;
+      margin-bottom: 0.375rem;
+    }
+
+    .chat-empty[hidden] { display: none !important; }
+
+    .chat-message {
+      display: flex;
+      width: 100%;
+      animation: msg-in 0.25s ease-out;
+    }
+
+    @keyframes msg-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .chat-message--user { justify-content: flex-end; }
+    .chat-message--assistant { justify-content: flex-start; }
+
+    .chat-message__inner { display: flex; flex-direction: column; gap: 0.35rem; max-width: 100%; min-width: 0; }
+    .chat-message--user .chat-message__inner { align-items: flex-end; max-width: min(85%, 28rem); }
+    .chat-message--assistant .chat-message__inner { align-items: flex-start; max-width: 100%; width: 100%; }
+
+    .chat-message__meta {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      padding: 0 0.25rem;
+    }
+
+    .bubble { border-radius: var(--radius-bubble); word-break: break-word; overflow-wrap: anywhere; }
+
+    .chat-message--user .bubble {
+      background: var(--bg-user);
+      color: var(--text-user);
+      padding: 0.625rem 1rem;
+      white-space: pre-wrap;
+      line-height: 1.5;
+      font-size: 0.9375rem;
+    }
+
+    .chat-message--assistant .bubble {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-bubble);
+      padding: 0;
+      display: inline-block;
+      width: auto;
+      max-width: min(100%, 44rem);
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .chat-message--assistant .bubble--wide { max-width: 100%; width: 100%; }
+
+    .msg-body {
+      padding: 0.875rem 1.125rem;
+      font-size: 1rem;
+      line-height: 1.75;
+      overflow-x: auto;
+      white-space: normal;
+    }
+
+    .msg-body--streaming {
+      white-space: pre-wrap;
+    }
+
+    .msg-body--streaming::after {
+      content: "▍";
+      display: inline-block;
+      margin-left: 2px;
+      color: #64748b;
+      animation: stream-caret 1s step-end infinite;
+    }
+
+    @keyframes stream-caret {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+
+    .msg-body > :first-child { margin-top: 0; }
+    .msg-body > :last-child { margin-bottom: 0; }
+
+    .msg-body p { margin: 0.65em 0; }
+    .msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4 {
+      margin: 1.15em 0 0.45em;
+      font-weight: 700;
+      line-height: 1.3;
+      letter-spacing: -0.02em;
+    }
+    .msg-body h1 { font-size: 1.25rem; }
+    .msg-body h2 { font-size: 1.1rem; }
+    .msg-body h3, .msg-body h4 { font-size: 1rem; }
+
+    .msg-body ul, .msg-body ol { margin: 0.65em 0; padding-left: 1.35rem; }
+    .msg-body li { margin: 0.3em 0; }
+
+    .msg-body blockquote {
+      margin: 0.85em 0;
+      padding: 0.5rem 1rem;
+      border-left: 3px solid var(--accent);
+      background: #f8fafc;
+      color: #475569;
+      border-radius: 0 0.5rem 0.5rem 0;
+    }
+
+    .msg-body hr { border: none; border-top: 1px solid var(--border); margin: 1.25em 0; }
+    .msg-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+    .msg-body a:hover { color: var(--accent-hover); }
+
+    .msg-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.85em 0;
+      font-size: 0.875rem;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      overflow: hidden;
+    }
+
+    .msg-body th, .msg-body td {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.65rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .msg-body th { background: #f4f4f5; font-weight: 600; color: #3f3f46; }
+    .msg-body tr:nth-child(even) td { background: #fafafa; }
+
+    .msg-body pre {
+      margin: 0.85em 0;
+      padding: 0.875rem 1rem;
+      background: var(--pre-bg);
+      color: var(--pre-text);
+      border-radius: 0.625rem;
+      overflow-x: auto;
+      white-space: pre;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.55;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .msg-body code {
+      font-family: var(--font-mono);
+      font-size: 0.84em;
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 0.12em 0.35em;
+      border-radius: 0.25rem;
+      white-space: break-spaces;
+    }
+
+    .msg-body pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      font-size: inherit;
+      white-space: pre;
+    }
+
+    .bubble__extras { padding: 0 1rem 0.875rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+    .btn-chip {
+      font-family: inherit;
+      font-size: 0.8125rem;
+      padding: 0.4rem 0.85rem;
+      border-radius: 9999px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    }
+
+    .btn-chip:hover { background: #f4f4f5; border-color: #a1a1aa; }
+    .btn-chip:active { transform: scale(0.98); }
+    .btn-chip:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+    .agent-trail { display: flex; flex-direction: column; gap: 0.5rem; }
+    .agent-trail__step {
+      font-size: 0.8125rem;
+      line-height: 1.45;
+      color: #52525b;
+      padding: 0.35rem 0 0.35rem 0.75rem;
+      border-left: 3px solid #818cf8;
+      background: linear-gradient(90deg, rgba(129, 140, 248, 0.08), transparent);
+      border-radius: 0 0.375rem 0.375rem 0;
+    }
+
+    .agent-trail__step strong { color: #4338ca; font-weight: 600; }
+
+    .thinking-row {
+      display: flex;
+      justify-content: flex-start;
+      width: 100%;
+      max-width: var(--thread-max);
+      margin: 0 auto;
+      padding: 0 0.25rem;
+    }
+
+    .thinking-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      padding: 0.5rem 0.875rem;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      box-shadow: var(--shadow-bubble);
+    }
+
+    .thinking-pill__dots { display: inline-flex; gap: 3px; }
+    .thinking-pill__dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: dot-pulse 1.2s ease-in-out infinite;
+    }
+
+    .thinking-pill__dots span:nth-child(2) { animation-delay: 0.15s; }
+    .thinking-pill__dots span:nth-child(3) { animation-delay: 0.3s; }
+
+    @keyframes dot-pulse {
+      0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+      40% { opacity: 1; transform: scale(1); }
+    }
+
+    .composer { flex-shrink: 0; background: var(--bg-surface); border-top: 1px solid var(--border); padding: 0.75rem 1rem 1rem; }
+    .composer__inner { max-width: calc(var(--thread-max) + 2rem); margin: 0 auto; display: flex; align-items: flex-end; gap: 0.5rem; }
+    .composer__field { flex: 1; min-width: 0; }
+
+    .composer__field input {
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-input);
+      background: #fafafa;
+      color: var(--text-primary);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+
+    .composer__field input::placeholder { color: #a1a1aa; }
+    .composer__field input:hover { background: var(--bg-surface); }
+    .composer__field input:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: var(--bg-surface);
+      box-shadow: 0 0 0 3px var(--ring);
+    }
+
+    .btn-send {
+      font-family: inherit;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      padding: 0.75rem 1.25rem;
+      border: none;
+      border-radius: var(--radius-input);
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+      white-space: nowrap;
+    }
+
+    .btn-send:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-send:active:not(:disabled) { transform: scale(0.98); }
+    .btn-send:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-send:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+    @media (max-width: 640px) {
+      .chat-message--user .chat-message__inner { max-width: 92%; }
+      .chat-message--assistant .bubble { max-width: 100%; }
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="app-header__inner">
+        <div class="app-brand">
+          <h1>Chat</h1>
+          <p id="appSubtitle">Messages stream from your n8n webhook</p>
+        </div>
+        <button type="button" id="downloadTranscriptBtn" class="btn">Transcript</button>
+      </div>
+    </header>
+
+    <div class="chat-scroll" id="chatScroll">
+      <div class="thread" id="chat" role="log" aria-live="polite" aria-relevant="additions">
+        <div id="chat-empty" class="chat-empty">
+          <strong>Start a conversation</strong>
+          Your messages go to the n8n webhook; assistant replies stream in below.
+        </div>
+      </div>
+    </div>
+
+    <form id="chat-form" class="composer" autocomplete="off">
+      <div class="composer__inner">
+        <div class="composer__field">
+          <label for="messageText" class="sr-only">Message</label>
+          <input id="messageText" type="text" enterkeyhint="send" placeholder="Write a message…" />
+        </div>
+        <button type="submit" id="sendButton" class="btn-send">Send</button>
+      </div>
+    </form>
+  </div>
+
+<script>
+const LS = "chatui.";
+
+const CONFIG_DEFAULTS = {
+  webhookUrl: "http://localhost:5678/webhook/3468560b-95c4-463b-9792-0781ba6bc137",
+  timezone:
+    typeof Intl !== "undefined" && Intl.DateTimeFormat
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "UTC",
+  streamFinalNodeNames: ["Respond to Webhook"],
+  streamDeltaNodeNames: ["AI Agent"],
+  displayKeys: [
+    "output", "response", "answer", "message", "text", "content", "body", "reply",
+    "TL;DR", "TLDR", "tldr", "summary", "markdown", "data", "result", "payload", "json"
+  ],
+  deltaContentFields: ["delta", "token", "text", "content", "message", "chunk"],
+  jsonRegexFallbackKeys: ["TL;DR", "TLDR", "tldr"],
+  statusThinking: "Thinking...",
+  debugEvents: true,
+  debugMaxChars: 700
+};
+
+function lsGet(key) {
+  try {
+    const v = localStorage.getItem(LS + key);
+    return v != null && v !== "" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCommaList(val, fallbackArr) {
+  if (val == null || String(val).trim() === "") return [...fallbackArr];
+  return String(val).split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function parseBool(val, fallback = false) {
+  if (val == null || String(val).trim() === "") return fallback;
+  const t = String(val).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(t)) return true;
+  if (["0", "false", "no", "off"].includes(t)) return false;
+  return fallback;
+}
+
+function buildConfig() {
+  const params = new URLSearchParams(window.location.search);
+
+  const pickStr = (queryKey, storageKey, fallback) => {
+    const q = params.get(queryKey);
+    if (q != null && q !== "") return q;
+    return lsGet(storageKey) ?? fallback;
+  };
+
+  const pickList = (queryKey, storageKey, fallbackArr) => {
+    const q = params.get(queryKey);
+    if (q != null && q !== "") return parseCommaList(q, fallbackArr);
+    const s = lsGet(storageKey);
+    if (s != null && s !== "") {
+      if (s.trim().startsWith("[")) {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed) && parsed.length) return parsed.map(String);
+        } catch {}
+      }
+      return parseCommaList(s, fallbackArr);
+    }
+    return [...fallbackArr];
+  };
+
+  const pickBool = (queryKey, storageKey, fallback) => {
+    const q = params.get(queryKey);
+    if (q != null && q !== "") return parseBool(q, fallback);
+    const s = lsGet(storageKey);
+    if (s != null && s !== "") return parseBool(s, fallback);
+    return fallback;
+  };
+
+  return {
+    webhookUrl: pickStr("webhook", "webhook", CONFIG_DEFAULTS.webhookUrl),
+    timezone: pickStr("timezone", "timezone", CONFIG_DEFAULTS.timezone),
+    streamFinalNodeNames: pickList("finalNodes", "finalNodes", CONFIG_DEFAULTS.streamFinalNodeNames),
+    streamDeltaNodeNames: pickList("deltaNodes", "deltaNodes", CONFIG_DEFAULTS.streamDeltaNodeNames),
+    displayKeys: pickList("displayKeys", "displayKeys", CONFIG_DEFAULTS.displayKeys),
+    deltaContentFields: pickList("deltaFields", "deltaFields", CONFIG_DEFAULTS.deltaContentFields),
+    jsonRegexFallbackKeys: pickList("fallbackKeys", "fallbackKeys", CONFIG_DEFAULTS.jsonRegexFallbackKeys),
+    statusThinking: pickStr("thinking", "thinking", CONFIG_DEFAULTS.statusThinking),
+    debugEvents: pickBool("debugEvents", "debugEvents", CONFIG_DEFAULTS.debugEvents),
+    debugMaxChars: Number(pickStr("debugMaxChars", "debugMaxChars", String(CONFIG_DEFAULTS.debugMaxChars))) || CONFIG_DEFAULTS.debugMaxChars
+  };
+}
+
+const CONFIG = buildConfig();
+
+if (typeof marked !== "undefined" && marked.use) {
+  marked.use({ gfm: true, breaks: true });
+}
+
+const State = {
+  sessionId: crypto.randomUUID(),
+  currentTurnId: null,
+  streamBuffer: "",
+  streamPreviewText: "",
+  controller: null,
+  streamRenderTimer: null,
+  streamPreviewShown: false,
+  finalReceived: false,
+  animationToken: null,
+  statusPlanSteps: [],
+  statusPlanIndex: 0,
+  statusPlanTimer: null
+};
+
+const DOM = {
+  chat: document.getElementById("chat"),
+  chatScroll: document.getElementById("chatScroll"),
+  chatEmpty: document.getElementById("chat-empty"),
+  appSubtitle: document.getElementById("appSubtitle"),
+  form: document.getElementById("chat-form"),
+  input: document.getElementById("messageText"),
+  sendBtn: document.getElementById("sendButton"),
+  downloadBtn: document.getElementById("downloadTranscriptBtn")
+};
+
+function scrollChatToEnd() {
+  const el = DOM.chatScroll;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function hideChatEmpty() {
+  DOM.chatEmpty?.setAttribute("hidden", "");
+}
+
+function refreshAppSubtitle() {
+  const el = DOM.appSubtitle;
+  if (!el) return;
+  const url = (CONFIG.webhookUrl || "").trim();
+  if (!url) {
+    el.textContent = "Set ?webhook= or localStorage chatui.webhook";
+    return;
+  }
+  try {
+    const u = new URL(url);
+    const path = u.pathname || "/";
+    const shortPath = path.length > 28 ? path.slice(0, 26) + "…" : path;
+    el.textContent = `${u.hostname}${shortPath}`;
+  } catch {
+    el.textContent = "Webhook configured";
+  }
+}
+
+const Utils = {
+  safeParse: (v) => {
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+  },
+  uuid: () => crypto.randomUUID(),
+  timestamp: () => {
+    const tz = CONFIG.timezone || "UTC";
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).formatToParts(new Date());
+      const g = (t) => parts.find((p) => p.type === t)?.value || "00";
+      return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")}`;
+    } catch {
+      return new Date().toISOString().slice(0, 19).replace("T", " ");
+    }
+  }
+};
+
+const EventDebug = {
+  seq: 0,
+  groupOpen: false,
+
+  enabled() {
+    return !!CONFIG.debugEvents;
+  },
+
+  clip(value, max = CONFIG.debugMaxChars || 700) {
+    const text =
+      typeof value === "string"
+        ? value
+        : (() => {
+            try {
+              return JSON.stringify(value);
+            } catch {
+              return String(value);
+            }
+          })();
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max)}...` : text;
+  },
+
+  startTurn(userMessage) {
+    if (!this.enabled()) return;
+    if (this.groupOpen) {
+      try { console.groupEnd(); } catch {}
+      this.groupOpen = false;
+    }
+    this.seq = 0;
+    const turn = State.currentTurnId || "unknown";
+    console.groupCollapsed(`%c[LLM STREAM] turn=${turn}`, "color:#2563eb;font-weight:700;");
+    this.groupOpen = true;
+    console.log("user_message:", this.clip(userMessage, 300));
+    console.log("webhook:", CONFIG.webhookUrl);
+  },
+
+  rawLine(line) {
+    if (!this.enabled()) return;
+    this.seq += 1;
+    console.log(`[LLM STREAM][${this.seq}] raw_line`, this.clip(line));
+  },
+
+  parsedRaw(raw) {
+    if (!this.enabled()) return;
+    const info = {
+      type: raw?.type ?? raw?.event ?? null,
+      node: raw?.metadata?.nodeName ?? raw?.nodeName ?? raw?.node ?? null,
+      keys: raw && typeof raw === "object" ? Object.keys(raw) : []
+    };
+    console.log("[LLM STREAM] parsed_event", info, raw);
+  },
+
+  normalized(evt) {
+    if (!this.enabled()) return;
+    if (!evt) {
+      console.log("[LLM STREAM] normalized_event", "null (ignored)");
+      return;
+    }
+    const summary = {
+      type: evt.type,
+      hasContent: evt.content != null && String(evt.content).length > 0,
+      steps: Array.isArray(evt.steps) ? evt.steps.length : 0
+    };
+    console.log("[LLM STREAM] normalized_event", summary, evt);
+  },
+
+  renderStage(label, payload) {
+    if (!this.enabled()) return;
+    console.log(`[LLM STREAM] ${label}`, payload);
+  },
+
+  endTurn(reason = "done") {
+    if (!this.enabled()) return;
+    console.log("[LLM STREAM] turn_end:", reason);
+    if (this.groupOpen) {
+      try { console.groupEnd(); } catch {}
+      this.groupOpen = false;
+    }
+  }
+};
+
+const ContentExtractor = {
+  peelMarkdownFence(s) {
+    const t = String(s).trim();
+    const m = t.match(/^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```$/i);
+    return m ? m[1].trim() : t;
+  },
+
+  fixJsonText(s) {
+    return String(s)
+      .replace(/^\uFEFF/, "")
+      .replace(/[\u201C\u201D\u00AB\u00BB]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'");
+  },
+
+  parseJsonLoose(s) {
+    let t = this.peelMarkdownFence(s);
+    t = this.fixJsonText(t);
+    let p = Utils.safeParse(t);
+    if (p != null) return p;
+    t = t.replace(/,\s*([}\]])/g, "$1");
+    return Utils.safeParse(t);
+  },
+
+  extractTldrKeyFromRawString(s) {
+    const keys = CONFIG.jsonRegexFallbackKeys;
+    if (!keys.length) return null;
+    const alt = keys.map((k) => String(k).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    const re = new RegExp(`"(?:${alt})"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`, "i");
+    const m = String(s).match(re);
+    if (!m) return null;
+    return m[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  },
+
+  normalizeEscapes(s) {
+    if (typeof s !== "string") return s;
+    return s
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/<br\s*\/?>/gi, "\n");
+  },
+
+  unwrapJson(value) {
+    let cur = value;
+
+    for (let i = 0; i < 8; i++) {
+      if (cur == null) return cur;
+
+      if (typeof cur === "string") {
+        const t = this.peelMarkdownFence(cur).trim();
+        const parsed = this.parseJsonLoose(t);
+        if (parsed !== null) {
+          cur = parsed;
+          continue;
+        }
+        return this.normalizeEscapes(t);
+      }
+
+      if (Array.isArray(cur)) return cur;
+
+      if (typeof cur === "object") {
+        if (Object.prototype.hasOwnProperty.call(cur, "output")) {
+          cur = cur.output;
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(cur, "data")) {
+          cur = cur.data;
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(cur, "result")) {
+          cur = cur.result;
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(cur, "payload")) {
+          cur = cur.payload;
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(cur, "body") && Object.keys(cur).length === 1) {
+          cur = cur.body;
+          continue;
+        }
+        return cur;
+      }
+
+      return cur;
+    }
+
+    return cur;
+  },
+
+  pickFromObject(obj) {
+    if (Array.isArray(obj) && obj.length) return this.pickFromObject(obj[0]);
+    if (!obj || typeof obj !== "object") return null;
+
+    for (const k of CONFIG.displayKeys) {
+      if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+      const v = obj[k];
+      if (v == null) continue;
+      if (typeof v === "string" && v.trim()) return this.normalizeEscapes(v);
+      if (typeof v === "object") {
+        const nested = this.pickFromObject(v);
+        if (nested) return nested;
+      }
+    }
+
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (typeof v === "string" && v.trim()) return this.normalizeEscapes(v);
+      if (typeof v === "object" && v !== null) {
+        const nested = this.pickFromObject(v);
+        if (nested) return nested;
+      }
+    }
+
+    return null;
+  },
+
+  extractAssistantText(payload) {
+    const p = this.unwrapJson(payload);
+
+    if (typeof p === "string") {
+      const nested = this.parseJsonLoose(this.peelMarkdownFence(p));
+      if (nested && typeof nested === "object") return this.extractAssistantText(nested);
+      return p.trim();
+    }
+
+    if (p == null) return "";
+
+    if (Array.isArray(p)) {
+      const parts = p.map((x) => this.extractAssistantText(x)).filter(Boolean);
+      return parts.join("\n").trim();
+    }
+
+    if (typeof p !== "object") return String(p);
+
+    if (typeof p.role === "string" && p.role.toLowerCase() === "assistant") {
+      const c = this.extractAssistantText(p.content);
+      if (c) return c;
+    }
+
+    if (typeof p.content === "string" && p.content.trim()) return p.content.trim();
+
+    if (Array.isArray(p.content)) {
+      const parts = p.content.map((item) => {
+        if (typeof item === "string") return item;
+        if (!item || typeof item !== "object") return "";
+        if (typeof item.text === "string") return item.text;
+        if (typeof item.content === "string") return item.content;
+        if (typeof item.value === "string") return item.value;
+        if (item.type === "text" && typeof item.text === "string") return item.text;
+        if (item.text && typeof item.text === "object" && typeof item.text.value === "string") return item.text.value;
+        return "";
+      }).filter(Boolean);
+      if (parts.length) return parts.join("\n").trim();
+    }
+
+    const directKeys = ["response", "answer", "message", "text", "output_text", "final_answer", "assistant_response"];
+    for (const key of directKeys) {
+      const v = p[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+      if (v && typeof v === "object") {
+        const nested = this.extractAssistantText(v);
+        if (nested) return nested;
+      }
+    }
+
+    if (Array.isArray(p.choices) && p.choices.length) {
+      const c0 = p.choices[0];
+      const nested = this.extractAssistantText(c0?.message ?? c0?.delta ?? c0?.text ?? c0);
+      if (nested) return nested;
+    }
+
+    return "";
+  },
+
+  deltaPiece(c) {
+    if (typeof c === "string") return c;
+    if (c == null) return "";
+    if (typeof c === "object") {
+      for (const k of CONFIG.deltaContentFields) {
+        if (typeof c[k] === "string") return c[k];
+      }
+      const nested = this.pickFromObject(c);
+      if (nested) return nested;
+    }
+    return "";
+  },
+
+  toDisplayMarkdown(input) {
+    if (input == null) return "";
+    if (typeof input === "number" || typeof input === "boolean") return String(input);
+
+    if (typeof input === "string") {
+      let s = input.trim();
+      for (let i = 0; i < 4; i++) {
+        const p = this.parseJsonLoose(s);
+        if (p == null) break;
+        if (typeof p === "string") {
+          s = p.trim();
+          continue;
+        }
+        if (typeof p === "object" && p !== null) {
+          const got = this.pickFromObject(p);
+          if (got) return got;
+          break;
+        }
+        break;
+      }
+      const fallback = this.extractTldrKeyFromRawString(s);
+      if (fallback) return this.normalizeEscapes(fallback);
+      return this.normalizeEscapes(s);
+    }
+
+    if (typeof input === "object" && input !== null) {
+      const got = this.pickFromObject(input);
+      if (got) return got;
+      return "";
+    }
+
+    return this.normalizeEscapes(String(input));
+  },
+
+  prepareFinalPayload(payload) {
+    if (payload == null) return { text: "", buttons: null, agents: null };
+
+    const normalized = this.unwrapJson(payload);
+    const text = this.extractAssistantText(normalized) || this.toDisplayMarkdown(normalized) || "";
+
+    const obj = normalized && typeof normalized === "object" ? normalized : {};
+    return {
+      text,
+      buttons: obj.buttons ?? null,
+      agents: obj.agents ?? null
+    };
+  }
+};
+
+const Formatter = {
+  fixTables(text) {
+    if (typeof text !== "string") return text;
+
+    if (text.includes("|") && !text.includes("---")) {
+      const lines = text.split("\n");
+      if (lines.length > 1 && lines[0].includes("|")) {
+        const header = lines[0];
+        const divider = header.split("|").map(() => "---").join("|");
+        lines.splice(1, 0, divider);
+        return lines.join("\n");
+      }
+    }
+    return text;
+  }
+};
+
+const Renderer = (() => {
+  let assistantRow = null;
+
+  function setBubbleWideFromHtml(bubble, html) {
+    bubble.classList.toggle("bubble--wide", /<(?:table|pre)\b/i.test(html));
+  }
+
+  function ensureBubbleExtras(bubble) {
+    let ex = bubble.querySelector(".bubble__extras");
+    if (!ex) {
+      ex = document.createElement("div");
+      ex.className = "bubble__extras";
+      bubble.appendChild(ex);
+    }
+    return ex;
+  }
+
+  function createRow(role) {
+    const row = document.createElement("article");
+    row.className = `chat-message chat-message--${role}`;
+
+    const inner = document.createElement("div");
+    inner.className = "chat-message__inner";
+
+    const meta = document.createElement("div");
+    meta.className = "chat-message__meta";
+    meta.textContent = role === "user" ? "You" : "Assistant";
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+
+    if (role === "assistant") {
+      const body = document.createElement("div");
+      body.className = "msg-body";
+      bubble.appendChild(body);
+    }
+
+    inner.appendChild(meta);
+    inner.appendChild(bubble);
+    row.appendChild(inner);
+    DOM.chat.appendChild(row);
+    scrollChatToEnd();
+
+    return row;
+  }
+
+  function userMessage(text) {
+    hideChatEmpty();
+    const row = createRow("user");
+    row.querySelector(".bubble").textContent = text;
+    assistantRow = null;
+    scrollChatToEnd();
+  }
+
+  function ensureAssistant() {
+    if (!assistantRow) {
+      hideChatEmpty();
+      assistantRow = createRow("assistant");
+    }
+    return assistantRow;
+  }
+
+  function getAssistantBody(row) {
+    return row.querySelector(".msg-body");
+  }
+
+  function renderMarkdown(md) {
+    hideChatEmpty();
+    const raw = typeof md === "string" ? md.trim() : md == null ? "" : String(md);
+    const fixed = Formatter.fixTables(raw);
+    const row = ensureAssistant();
+    const bubble = row.querySelector(".bubble");
+    const body = getAssistantBody(row);
+    let html = "";
+    try {
+      html = marked.parse(fixed);
+    } catch {
+      body.textContent = fixed;
+      body.classList.add("msg-body--streaming");
+      bubble.classList.remove("bubble--wide");
+      scrollChatToEnd();
+      return;
+    }
+    body.classList.remove("msg-body--streaming");
+    body.innerHTML = DOMPurify.sanitize(html);
+    setBubbleWideFromHtml(bubble, html);
+    scrollChatToEnd();
+  }
+
+  function renderStreamingPlain(text) {
+    hideChatEmpty();
+    const row = ensureAssistant();
+    const bubble = row.querySelector(".bubble");
+    const body = getAssistantBody(row);
+
+    body.classList.add("msg-body--streaming");
+    body.textContent = text || "";
+    bubble.classList.toggle("bubble--wide", /\n|```|\|/.test(text || ""));
+    scrollChatToEnd();
+  }
+
+  function renderButtons(buttons) {
+    if (!buttons?.length) return;
+    const row = ensureAssistant();
+    const bubble = row.querySelector(".bubble");
+    const ex = ensureBubbleExtras(bubble);
+    let wrap = ex.querySelector(".quick-actions");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "quick-actions";
+      ex.appendChild(wrap);
+    }
+    wrap.replaceChildren();
+
+    buttons.forEach((label) => {
+      if (!label || !String(label).trim()) return;
+      const t = String(label).trim();
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-chip";
+      btn.textContent = t;
+      btn.addEventListener("click", () => Controller.sendMessage(t));
+      wrap.appendChild(btn);
+    });
+
+    if (wrap.children.length) scrollChatToEnd();
+  }
+
+  function renderAgentFlow(steps) {
+    if (!steps?.length) return;
+    const row = ensureAssistant();
+    const bubble = row.querySelector(".bubble");
+    const ex = ensureBubbleExtras(bubble);
+    let trail = ex.querySelector(".agent-trail");
+    if (!trail) {
+      trail = document.createElement("div");
+      trail.className = "agent-trail";
+      ex.appendChild(trail);
+    }
+    trail.replaceChildren();
+
+    steps.forEach((step) => {
+      const div = document.createElement("div");
+      div.className = "agent-trail__step";
+      const strong = document.createElement("strong");
+      strong.textContent = step.agent != null ? String(step.agent) : "Agent";
+      div.appendChild(strong);
+      div.appendChild(document.createTextNode(": " + (step.action != null ? String(step.action) : "")));
+      trail.appendChild(div);
+    });
+
+    scrollChatToEnd();
+  }
+
+  function status(text) {
+    let el = document.getElementById("status-line");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "status-line";
+      el.className = "thinking-row";
+      el.innerHTML =
+        '<div class="thinking-pill" role="status">' +
+        '<span class="thinking-pill__dots" aria-hidden="true"><span></span><span></span><span></span></span>' +
+        '<span class="thinking-pill__label"></span></div>';
+      DOM.chat.appendChild(el);
+    }
+    const label = el.querySelector(".thinking-pill__label");
+    if (label) label.textContent = text;
+    scrollChatToEnd();
+  }
+
+  function clearStatus() {
+    document.getElementById("status-line")?.remove();
+  }
+
+  return {
+    userMessage,
+    renderMarkdown,
+    renderStreamingPlain,
+    renderButtons,
+    renderAgentFlow,
+    status,
+    clearStatus
+  };
+})();
+
+function streamNodeMatches(name, allowedList) {
+  if (name == null || !allowedList?.length) return false;
+  const n = String(name).trim().toLowerCase();
+  return allowedList.some((a) => String(a).trim().toLowerCase() === n);
+}
+
+function looksLikeJsonNoise(text) {
+  const s = String(text || "").trim();
+  if (!s) return false;
+  const sample = s.slice(0, 400);
+  const punctuation = (sample.match(/[{}[\]":,]/g) || []).length;
+  const letters = (sample.match(/[A-Za-z]/g) || []).length;
+  const ratio = punctuation / Math.max(1, sample.length);
+  return sample.includes("{") && sample.includes("}") && sample.includes(":") && ratio > 0.16 && letters > 0;
+}
+
+const EventNormalizer = {
+  normalize(raw) {
+    if (!raw || typeof raw !== "object") return null;
+
+    const type = String(raw.type || raw.event || "").toLowerCase();
+    const nodeName = raw?.metadata?.nodeName || raw?.nodeName || raw?.node;
+
+    if (type === "status_plan" && Array.isArray(raw.steps)) {
+      return { type: "status_plan", steps: raw.steps };
+    }
+
+    if (type === "status") {
+      return { type: "status", content: raw.text || raw.message || CONFIG.statusThinking };
+    }
+
+    if (type === "error" || raw.error) {
+      return { type: "error", content: raw.message || raw.error || "Workflow error" };
+    }
+
+    if (type === "delta" || type === "token" || type === "chunk") {
+      return {
+        type: "delta",
+        content: raw.content ?? raw.delta ?? raw.token ?? raw.chunk ?? raw.text ?? ""
+      };
+    }
+
+    if (type === "item") {
+      if (streamNodeMatches(nodeName, CONFIG.streamFinalNodeNames)) {
+        return { type: "complete", content: this.extractFinal(raw.content ?? raw.data ?? raw.output ?? raw.json ?? raw) };
+      }
+      if (streamNodeMatches(nodeName, CONFIG.streamDeltaNodeNames)) {
+        return { type: "delta", content: raw.content ?? raw.data ?? raw.text ?? raw.json ?? "" };
+      }
+
+      if (raw.content != null || raw.data != null || raw.output != null || raw.json != null) {
+        return { type: "complete", content: this.extractFinal(raw.content ?? raw.data ?? raw.output ?? raw.json ?? raw) };
+      }
+    }
+
+    if (type === "complete" || type === "final" || raw.done === true) {
+      return { type: "complete", content: this.extractFinal(raw.content ?? raw.data ?? raw.output ?? raw.json ?? raw) };
+    }
+
+    if (!type && (raw.content != null || raw.output != null || raw.response != null || raw.message != null)) {
+      return { type: "complete", content: this.extractFinal(raw) };
+    }
+
+    return null;
+  },
+
+  extractFinal(content) {
+    if (content == null) return "";
+    if (typeof content === "object") return content;
+    const parsed = ContentExtractor.parseJsonLoose(content);
+    if (parsed !== null) return parsed;
+    return ContentExtractor.normalizeEscapes(String(content).trim());
+  }
+};
+
+const StreamProcessor = {
+  startStatusPlan(steps) {
+    this.stopStatusPlan();
+    const cleaned = (steps || []).map((s) => String(s || "").trim()).filter(Boolean);
+    if (!cleaned.length) return;
+
+    State.statusPlanSteps = cleaned;
+    State.statusPlanIndex = 0;
+    Renderer.status(cleaned[0]);
+
+    if (cleaned.length > 1) {
+      State.statusPlanTimer = setInterval(() => {
+        State.statusPlanIndex = (State.statusPlanIndex + 1) % State.statusPlanSteps.length;
+        Renderer.status(State.statusPlanSteps[State.statusPlanIndex]);
+      }, 1200);
+    }
+  },
+
+  stopStatusPlan() {
+    if (State.statusPlanTimer) {
+      clearInterval(State.statusPlanTimer);
+      State.statusPlanTimer = null;
+    }
+    State.statusPlanSteps = [];
+    State.statusPlanIndex = 0;
+  },
+
+  extractPartialStringForKey(buffer, key) {
+    const source = String(buffer || "");
+    if (!source) return "";
+
+    const escKey = String(key).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`"${escKey}"\\s*:\\s*"`, "gi");
+    let match = null;
+    let found = null;
+    while ((match = re.exec(source)) !== null) found = match;
+    if (!found) return "";
+
+    let i = found.index + found[0].length;
+    let out = "";
+    let escaped = false;
+
+    while (i < source.length) {
+      const ch = source[i++];
+      if (escaped) {
+        if (ch === "n") out += "\n";
+        else if (ch === "r") out += "\r";
+        else if (ch === "t") out += "\t";
+        else if (ch === '"' || ch === "\\" || ch === "/") out += ch;
+        else if (ch === "u" && i + 3 <= source.length) {
+          const hex = source.slice(i, i + 4);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            out += String.fromCharCode(parseInt(hex, 16));
+            i += 4;
+          } else {
+            out += "u";
+          }
+        } else {
+          out += ch;
+        }
+        escaped = false;
+        continue;
+      }
+
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') break;
+      out += ch;
+    }
+
+    return ContentExtractor.normalizeEscapes(out);
+  },
+
+  deriveStreamPreview(buffer) {
+    const raw = String(buffer || "");
+    if (!raw.trim()) return "";
+
+    const jsonish = /^\s*[{[]/.test(raw) && /"\s*:\s*/.test(raw);
+    if (!jsonish && !looksLikeJsonNoise(raw)) {
+      return ContentExtractor.normalizeEscapes(raw);
+    }
+
+    const parsed = ContentExtractor.parseJsonLoose(raw);
+    if (parsed && typeof parsed === "object") {
+      const direct =
+        ContentExtractor.extractAssistantText(parsed) ||
+        ContentExtractor.toDisplayMarkdown(parsed);
+      if (direct && direct.trim()) return direct;
+    }
+
+    const keys = [
+      "content",
+      "response",
+      "answer",
+      "message",
+      "text",
+      "output_text",
+      "final_answer"
+    ];
+    for (const key of keys) {
+      const candidate = this.extractPartialStringForKey(raw, key);
+      if (candidate && candidate.trim()) return candidate;
+    }
+
+    const outputField = this.extractPartialStringForKey(raw, "output");
+    if (outputField && outputField.trim()) {
+      const unescapedOutput = outputField.replace(/\\"/g, "\"");
+      for (const nestedKey of ["content", "response", "answer", "message", "text"]) {
+        const nestedPartial =
+          this.extractPartialStringForKey(unescapedOutput, nestedKey) ||
+          this.extractPartialStringForKey(outputField, nestedKey);
+        if (nestedPartial && nestedPartial.trim()) return nestedPartial;
+      }
+
+      const nestedParsed = ContentExtractor.parseJsonLoose(outputField);
+      if (nestedParsed && typeof nestedParsed === "object") {
+        const nested =
+          ContentExtractor.extractAssistantText(nestedParsed) ||
+          ContentExtractor.toDisplayMarkdown(nestedParsed);
+        if (nested && nested.trim()) return nested;
+      }
+      if (!looksLikeJsonNoise(outputField)) return outputField;
+    }
+
+    return "";
+  },
+
+  process(evt) {
+    if (!evt) return;
+
+    switch (evt.type) {
+      case "status_plan":
+        EventDebug.renderStage("process.status_plan", { steps: evt.steps });
+        this.startStatusPlan(evt.steps);
+        break;
+
+      case "delta": {
+        const piece = ContentExtractor.deltaPiece(evt.content);
+        if (!piece) break;
+
+        State.streamBuffer += piece;
+        State.streamPreviewText = this.deriveStreamPreview(State.streamBuffer);
+
+        if (this.shouldRenderDeltaPreview(State.streamPreviewText)) {
+          if (!State.streamRenderTimer) {
+            State.streamRenderTimer = setTimeout(() => {
+              Renderer.renderStreamingPlain(State.streamPreviewText);
+              State.streamPreviewShown = true;
+              EventDebug.renderStage("render.streaming_preview", {
+                previewLen: State.streamPreviewText.length
+              });
+              State.streamRenderTimer = null;
+            }, 35);
+          }
+        }
+        break;
+      }
+
+      case "status":
+        EventDebug.renderStage("process.status", { text: evt.content });
+        this.stopStatusPlan();
+        Renderer.status(evt.content);
+        break;
+
+      case "complete": {
+        if (State.finalReceived) break;
+        State.finalReceived = true;
+        this.stopStatusPlan();
+        Renderer.clearStatus();
+
+        if (State.streamRenderTimer) {
+          clearTimeout(State.streamRenderTimer);
+          State.streamRenderTimer = null;
+        }
+
+        EventDebug.renderStage("process.complete", {
+          finalPayloadType: typeof (evt.content || State.streamBuffer)
+        });
+        this.renderFinal(evt.content || State.streamBuffer);
+        State.streamBuffer = "";
+        State.streamPreviewText = "";
+        EventDebug.endTurn("complete");
+        break;
+      }
+
+      case "error":
+        EventDebug.renderStage("process.error", { detail: evt.content });
+        State.finalReceived = true;
+        this.stopStatusPlan();
+        Renderer.clearStatus();
+        State.streamPreviewText = "";
+        Renderer.renderMarkdown("[Error]");
+        EventDebug.endTurn("error");
+        break;
+    }
+  },
+
+  shouldRenderDeltaPreview(previewText) {
+    const b = String(previewText || "");
+    if (!b.trim()) return false;
+    return true;
+  },
+
+  stripMarkdownForPreview(md) {
+    return String(md || "")
+      .replace(/```[\s\S]*?```/g, "[code]")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/^#{1,6}\s*/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/^\s*\d+\.\s+/gm, "")
+      .replace(/\|/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  },
+
+  animateFinalReveal(markdown) {
+    const token = State.currentTurnId || Utils.uuid();
+    State.animationToken = token;
+    const previewText = this.stripMarkdownForPreview(markdown).slice(0, 1200);
+    if (!previewText) {
+      Renderer.renderMarkdown(markdown);
+      return;
+    }
+
+    const parts = previewText.split(/(\s+)/).filter(Boolean);
+    let acc = "";
+    let i = 0;
+
+    const tick = () => {
+      if (State.animationToken !== token) return;
+      if (i >= parts.length) {
+        Renderer.renderMarkdown(markdown);
+        return;
+      }
+      acc += parts[i++];
+      Renderer.renderStreamingPlain(acc);
+      setTimeout(tick, 14);
+    };
+
+    tick();
+  },
+
+  renderFinal(payload) {
+    const { text, buttons, agents } = ContentExtractor.prepareFinalPayload(payload);
+    const body =
+      text.trim() ||
+      (typeof payload === "object" && payload !== null && !Array.isArray(payload)
+        ? ContentExtractor.normalizeEscapes(JSON.stringify(payload, null, 2))
+        : String(payload ?? ""));
+
+    if (!State.streamPreviewShown && body) {
+      this.animateFinalReveal(body);
+    } else {
+      Renderer.renderMarkdown(body);
+    }
+
+    EventDebug.renderStage("render.final", {
+      bodyLen: body.length,
+      buttons: Array.isArray(buttons) ? buttons.length : 0,
+      agents: Array.isArray(agents) ? agents.length : 0
+    });
+
+    if (buttons?.length) Renderer.renderButtons(buttons);
+    if (agents?.length) Renderer.renderAgentFlow(agents);
+  }
+};
+
+const Transport = {
+  async send(message) {
+    State.controller = new AbortController();
+
+    const res = await fetch((CONFIG.webhookUrl || "").trim(), {
+      method: "POST",
+      signal: State.controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: State.sessionId,
+        request_id: Utils.uuid(),
+        user_message: message,
+        user_timezone: CONFIG.timezone,
+        user_message_date_and_time: Utils.timestamp()
+      })
+    });
+
+    if (!res.ok) {
+      const tx = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${tx || res.statusText}`);
+    }
+    if (!res.body) throw new Error("No stream");
+
+    const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+    const isSSE = contentType.includes("text/event-stream");
+    await this.read(res.body, { isSSE });
+  },
+
+  async read(stream, { isSSE }) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let sseBuffer = "";
+
+    const processLine = (line) => {
+      const clean = line.replace(/^data:\s?/, "").replace(/\r$/, "");
+      if (!clean.trim()) return;
+      EventDebug.rawLine(clean);
+
+      const jsonCandidate = clean.trim();
+      if (jsonCandidate === "[DONE]") {
+        EventDebug.renderStage("stream.done_marker", {});
+        StreamProcessor.process({ type: "complete", content: State.streamBuffer });
+        return;
+      }
+
+      const raw = Utils.safeParse(jsonCandidate);
+      if (raw == null) {
+        // Some providers stream plain text lines; treat them as deltas.
+        EventDebug.renderStage("stream.plain_delta_line", {
+          sample: EventDebug.clip(clean, 200)
+        });
+        StreamProcessor.process({ type: "delta", content: clean });
+        return;
+      }
+      EventDebug.parsedRaw(raw);
+
+      const evt = EventNormalizer.normalize(raw);
+      EventDebug.normalized(evt);
+      if (evt) StreamProcessor.process(evt);
+    };
+
+    const processSseFrame = (frame) => {
+      const parts = frame.split(/\r?\n/);
+      const dataLines = [];
+      for (const p of parts) {
+        if (p.startsWith("data:")) dataLines.push(p.slice(5).trimStart());
+      }
+      if (!dataLines.length) return;
+      processLine(dataLines.join("\n"));
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+
+      if (isSSE) {
+        sseBuffer += chunk;
+        const frames = sseBuffer.split(/\r?\n\r?\n/);
+        sseBuffer = frames.pop() || "";
+        for (const frame of frames) processSseFrame(frame);
+      } else {
+        buffer += chunk;
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        for (const line of lines) processLine(line);
+      }
+    }
+
+    if (isSSE) {
+      if (sseBuffer.trim()) processSseFrame(sseBuffer);
+    } else {
+      if (buffer.trim()) processLine(buffer);
+    }
+
+    // Final safety: if we only got deltas and never a final event, finalize now.
+    if (State.streamBuffer.trim()) {
+      StreamProcessor.process({ type: "complete", content: State.streamBuffer });
+    }
+  }
+};
+
+const Controller = {
+  async sendMessage(text) {
+    Renderer.userMessage(text);
+    StreamProcessor.stopStatusPlan();
+    Renderer.clearStatus();
+
+    DOM.input.value = "";
+    DOM.input.disabled = true;
+    DOM.sendBtn.disabled = true;
+
+    if (State.streamRenderTimer) {
+      clearTimeout(State.streamRenderTimer);
+      State.streamRenderTimer = null;
+    }
+
+    State.currentTurnId = Utils.uuid();
+    State.streamBuffer = "";
+    State.streamPreviewText = "";
+    State.streamPreviewShown = false;
+    State.finalReceived = false;
+    State.animationToken = null;
+    EventDebug.startTurn(text);
+
+    const hook = (CONFIG.webhookUrl || "").trim();
+    if (!hook) {
+      EventDebug.endTurn("missing_webhook");
+      Renderer.renderMarkdown(
+        "Set **webhook** URL: add `?webhook=` to the page URL or `localStorage.setItem('chatui.webhook', 'https://…')`."
+      );
+      DOM.input.disabled = false;
+      DOM.sendBtn.disabled = false;
+      DOM.input.focus();
+      return;
+    }
+
+    Renderer.status(CONFIG.statusThinking);
+
+    try {
+      await Transport.send(text);
+    } catch (err) {
+      console.error(err);
+      EventDebug.renderStage("request.error", { message: err?.message || String(err) });
+      StreamProcessor.stopStatusPlan();
+      Renderer.clearStatus();
+      Renderer.renderMarkdown("[Error fetching response]");
+      EventDebug.endTurn("request_error");
+    } finally {
+      DOM.input.disabled = false;
+      DOM.sendBtn.disabled = false;
+      DOM.input.focus();
+    }
+  }
+};
+
+DOM.form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = DOM.input.value.trim();
+  if (!text) return;
+  Controller.sendMessage(text);
+});
+
+DOM.downloadBtn.addEventListener("click", () => {
+  const rows = [...document.querySelectorAll(".chat-message")];
+  const content = rows
+    .map((r) => {
+      const role = r.classList.contains("chat-message--user") ? "User" : "Assistant";
+      const text = r.innerText.trim();
+      return `${role}: ${text}`;
+    })
+    .join("\n\n");
+
+  const blob = new Blob([content], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `chat-${Date.now()}.txt`;
+  a.click();
+});
+
+refreshAppSubtitle();
+</script>
+</body>
+</html>
